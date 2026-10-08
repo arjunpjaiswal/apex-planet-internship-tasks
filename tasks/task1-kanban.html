@@ -217,6 +217,21 @@
       border-radius: 4px;
       letter-spacing: 0.04em;
     }
+    .kanban-card.priority-border-low { border-left: 4px solid var(--priority-low); }
+    .kanban-card.priority-border-medium { border-left: 4px solid var(--priority-med); }
+    .kanban-card.priority-border-high { border-left: 4px solid var(--priority-high); }
+
+    .empty-column-placeholder {
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      margin: auto 0;
+      user-select: none;
+    }
+
     .priority-low { background: rgba(16, 185, 129, 0.15); color: var(--priority-low); }
     .priority-medium { background: rgba(245, 158, 11, 0.15); color: var(--priority-med); }
     .priority-high { background: rgba(239, 68, 68, 0.15); color: var(--priority-high); }
@@ -314,6 +329,7 @@
 <body>
   <header>
     <div class="brand">
+      <a href="../index.html" class="btn" style="text-decoration: none; padding: 6px 11px; font-size: 12px; margin-right: 4px;">&larr; Portfolio Hub</a>
       <h1>Kanban Board</h1>
       <span class="badge">Task 1</span>
     </div>
@@ -546,11 +562,17 @@
           });
 
           // Render Cards
-          filteredCards.forEach(card => {
-            const cardEl = document.createElement('div');
-            cardEl.className = 'kanban-card';
-            cardEl.draggable = true;
-            cardEl.dataset.cardId = card.id;
+          if (filteredCards.length === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'empty-column-placeholder';
+            emptyEl.textContent = 'No cards in this column • Drop here or click +';
+            listEl.appendChild(emptyEl);
+          } else {
+            filteredCards.forEach(card => {
+              const cardEl = document.createElement('div');
+              cardEl.className = `kanban-card priority-border-${card.priority}`;
+              cardEl.draggable = true;
+              cardEl.dataset.cardId = card.id;
 
             cardEl.innerHTML = `
               <div class="card-top">
@@ -593,6 +615,7 @@
 
             listEl.appendChild(cardEl);
           });
+        }
 
           // Add card button on header
           colEl.querySelector('.add-card-col').addEventListener('click', () => {

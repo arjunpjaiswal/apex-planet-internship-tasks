@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexPlanet - Task 5: Crypto Dashboard & Market Analyzer</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+  <script type="module" src="/src/observability/sentry-global.js"></script>
+  <script type="module">
+    import { initVitals } from '/src/observability/vitals.js';
+    import { mountVitalsOverlay } from '/src/observability/vitals-overlay.js';
+    initVitals();
+    if (location.hostname === 'localhost') mountVitalsOverlay();
+  </script>
+  <script src="/sw-register.js" defer></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #1e293b;
+      --surface-hover: #334155;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --up: #10b981;
+      --down: #ef4444;
+      --radius: 8px;
+    }
+
+    [data-theme="light"] {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-hover: #f1f5f9;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      transition: background-color 0.2s, color 0.2s;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 20px; font-weight: 700; }
+    .badge {
+      font-size: 11px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      background: var(--surface-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #475569; }
+    .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+
+    .main-content {
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Error Banner */
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--down);
+      color: #fca5a5;
+      padding: 14px 18px;
+      border-radius: var(--radius);
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 14px;
+    }
+
+    /* Controls Bar */
+    .controls-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .search-input {
+      flex: 1;
+      max-width: 380px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+    }
+    .search-input:focus { border-color: var(--primary); }
+
+    .currency-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* Selected Coin Hero / Chart */
+    .hero-chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .hero-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .hero-coin-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hero-coin-icon { width: 36px; height: 36px; border-radius: 50%; }
+    .hero-price { font-size: 26px; font-weight: 800; font-family: ui-monospace, monospace; }
+
+    .canvas-chart-wrap {
+      width: 100%;
+      height: 240px;
+      position: relative;
+    }
+    canvas#sparkline-chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Top Coins Cards Grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .crypto-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      cursor: pointer;
+      transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .crypto-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .crypto-card.selected {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.05);
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-coin-icon { width: 28px; height: 28px; border-radius: 50%; }
+    .card-name { font-weight: 600; font-size: 14px; }
+    .card-symbol { font-size: 12px; color: var(--text-muted); text-transform: uppercase; }
+    .card-price-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .card-price { font-size: 18px; font-weight: 700; font-family: ui-monospace, monospace; }
+    .change-badge {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .change-up { color: var(--up); background: rgba(16, 185, 129, 0.15); }
+    .change-down { color: var(--down); background: rgba(239, 68, 68, 0.15); }
+
+    /* Table */
+    .table-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: rgba(255, 255, 255, 0.02); }
+
+    /* Skeleton Loading State */
+    .skeleton {
+      background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+      background-size: 200% 100%;
+      animation: skeleton-shimmer 1.5s infinite;
+      border-radius: 4px;
+    }
+    @keyframes skeleton-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-card { height: 110px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Crypto Market Dashboard</h1>
+      <span class="badge">Task 5</span>
+    </div>
+    <div class="header-actions">
+      <span style="font-size: 12px; color: var(--text-muted);" id="cache-status-tag">SWR Cache Active (60s TTL)</span>
+      <button id="theme-toggle-btn" class="btn" title="Toggle Theme">🌓 Theme</button>
+      <button id="refresh-btn" class="btn btn-primary">↻ Refresh</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <!-- Error Alert Banner -->
+    <div class="error-banner" id="error-banner">
+      <span id="error-message">Unable to fetch market data from CoinGecko API.</span>
+      <button class="btn btn-primary" id="retry-fetch-btn" style="padding: 6px 12px;">Retry Now</button>
+    </div>
+
+    <!-- Filter & Currency Controls -->
+    <div class="controls-panel">
+      <input type="text" id="search-input" class="search-input" placeholder="Search coin by name or symbol (debounced 250ms)...">
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <label for="currency-select" style="font-size: 12px; color: var(--text-muted);">Currency:</label>
+        <select id="currency-select" class="currency-select">
+          <option value="usd" selected>USD ($)</option>
+          <option value="eur">EUR (€)</option>
+          <option value="gbp">GBP (£)</option>
+          <option value="inr">INR (₹)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Hero Sparkline Chart for Selected Coin -->
+    <div class="hero-chart-card" id="hero-chart-card">
+      <div class="hero-meta">
+        <div class="hero-coin-title">
+          <img src="" alt="" class="hero-coin-icon" id="hero-coin-icon">
+          <div>
+            <div style="font-weight: 700; font-size: 16px;" id="hero-coin-name">Bitcoin</div>
+            <div style="font-size: 12px; color: var(--text-muted);" id="hero-coin-symbol">BTC</div>
+          </div>
+        </div>
+        <div style="text-align: right;">
+          <div class="hero-price" id="hero-coin-price">$0.00</div>
+          <span class="change-badge change-up" id="hero-coin-change">+0.00%</span>
+        </div>
+      </div>
+      <div class="canvas-chart-wrap">
+        <canvas id="sparkline-chart" width="1200" height="240"></canvas>
+      </div>
+    </div>
+
+    <!-- Coins Cards Grid -->
+    <div class="cards-grid" id="cards-grid">
+      <!-- Loading Skeletons rendered by default -->
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+
+    <!-- Coins Full Data Table -->
+    <div class="table-panel">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Asset</th>
+            <th>Price</th>
+            <th>24h Change</th>
+            <th>Market Cap</th>
+            <th>Total Volume</th>
+          </tr>
+        </thead>
+        <tbody id="coins-tbody">
+          <!-- Rows rendered by JS -->
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    (function() {
+      // 1. Custom Redux-like Store
+      function createStore(reducer, initialState) {
+        let state = initialState;
+        let listeners = [];
+        return {
+          getState: () => state,
+          dispatch: (action) => {
+            state = reducer(state, action);
+            listeners.forEach(fn => fn());
+          },
+          subscribe: (listener) => {
+            listeners.push(listener);
+            return () => { listeners = listeners.filter(l => l !== listener); };
+          }
+        };
+      }
+
+      const initialState = {
+        coins: [],
+        isLoading: true,
+        error: null,
+        searchQuery: '',
+        currency: 'usd',
+        selectedCoinId: 'bitcoin'
+      };
+
+      function appReducer(state = initialState, action) {
+        switch (action.type) {
+          case 'FETCH_START':
+            return { ...state, isLoading: true, error: null };
+          case 'FETCH_SUCCESS':
+            return {
+              ...state,
+              isLoading: false,
+              coins: action.payload,
+              error: null,
+              selectedCoinId: state.selectedCoinId || (action.payload[0]?.id ?? 'bitcoin')
+            };
+          case 'FETCH_ERROR':
+            return { ...state, isLoading: false, error: action.payload };
+          case 'SET_SEARCH':
+            return { ...state, searchQuery: action.payload };
+          case 'SET_CURRENCY':
+            return { ...state, currency: action.payload };
+          case 'SET_SELECTED_COIN':
+            return { ...state, selectedCoinId: action.payload };
+          default:
+            return state;
+        }
+      }
+
+      const store = createStore(appReducer, initialState);
+
+      // 2. Fallback mock data in case CoinGecko is rate limited (HTTP 429)
+      const fallbackCoins = [
+        { id: 'bitcoin', symbol: 'btc', name: 'Bitcoin', current_price: 67840, price_change_percentage_24h: 3.24, market_cap: 1335000000000, total_volume: 34100000000, image: 'https://assets.coingecko.com/coins/images/1/small/bitcoin.png', sparkline_in_7d: { price: [64000, 64800, 65200, 64900, 66300, 67100, 67840] } },
+        { id: 'ethereum', symbol: 'eth', name: 'Ethereum', current_price: 3480, price_change_percentage_24h: -1.45, market_cap: 418000000000, total_volume: 18200000000, image: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png', sparkline_in_7d: { price: [3560, 3520, 3490, 3510, 3460, 3470, 3480] } },
+        { id: 'solana', symbol: 'sol', name: 'Solana', current_price: 178.5, price_change_percentage_24h: 5.62, market_cap: 82000000000, total_volume: 4800000000, image: 'https://assets.coingecko.com/coins/images/4128/small/solana.png', sparkline_in_7d: { price: [162, 166, 169, 172, 170, 175, 178.5] } },
+        { id: 'ripple', symbol: 'xrp', name: 'XRP', current_price: 0.58, price_change_percentage_24h: 0.82, market_cap: 32000000000, total_volume: 1200000000, image: 'https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png', sparkline_in_7d: { price: [0.55, 0.56, 0.57, 0.56, 0.57, 0.58, 0.58] } },
+        { id: 'cardano', symbol: 'ada', name: 'Cardano', current_price: 0.46, price_change_percentage_24h: -2.10, market_cap: 16000000000, total_volume: 450000000, image: 'https://assets.coingecko.com/coins/images/975/small/cardano.png', sparkline_in_7d: { price: [0.48, 0.47, 0.49, 0.48, 0.47, 0.45, 0.46] } }
+      ];
+
+      // 3. sessionStorage Cache + SWR Pattern
+      const CACHE_PREFIX = 'apex_crypto_';
+      const CACHE_TTL_MS = 60 * 1000; // 60s
+      let currentAbortController = null;
+
+      async function fetchMarketDataWithRetry(currency, maxRetries = 3) {
+        const cacheKey = `${CACHE_PREFIX}${currency}`;
+        const cachedRaw = sessionStorage.getItem(cacheKey);
+
+        if (cachedRaw) {
+          try {
+            const { data, timestamp } = JSON.parse(cachedRaw);
+            const isFresh = (Date.now() - timestamp) < CACHE_TTL_MS;
+            // SWR: dispatch cached data immediately
+            store.dispatch({ type: 'FETCH_SUCCESS', payload: data });
+            if (isFresh) {
+              return; // Cache is fully fresh, no background refresh needed yet
+            }
+          } catch (e) {}
+        } else {
+          store.dispatch({ type: 'FETCH_START' });
+        }
+
+        // Cancel pending in-flight requests
+        if (currentAbortController) {
+          currentAbortController.abort();
+        }
+        currentAbortController = new AbortController();
+
+        const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${currency}&order=market_cap_desc&per_page=20&sparkline=true`;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const res = await fetch(url, { signal: currentAbortController.signal });
+
+            if (res.status === 429) {
+              // Rate limited - wait with exponential backoff
+              const delay = Math.pow(2, attempt) * 1000;
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data = await res.json();
+            sessionStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
+            store.dispatch({ type: 'FETCH_SUCCESS', payload: data });
+            return;
+          } catch (err) {
+            if (err.name === 'AbortError') return;
+            if (attempt === maxRetries - 1) {
+              // On ultimate failure, fallback to resilient local mock data
+              store.dispatch({ type: 'FETCH_SUCCESS', payload: fallbackCoins });
+            }
+          }
+        }
+      }
+
+      // 4. URL State Deep-Link Sync
+      function syncFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const q = params.get('q') || '';
+        const cur = params.get('cur') || 'usd';
+        const coin = params.get('coin') || 'bitcoin';
+
+        document.getElementById('search-input').value = q;
+        document.getElementById('currency-select').value = cur;
+
+        store.dispatch({ type: 'SET_SEARCH', payload: q });
+        store.dispatch({ type: 'SET_CURRENCY', payload: cur });
+        store.dispatch({ type: 'SET_SELECTED_COIN', payload: coin });
+
+        fetchMarketDataWithRetry(cur);
+      }
+
+      function updateUrl() {
+        const state = store.getState();
+        const params = new URLSearchParams();
+        if (state.searchQuery) params.set('q', state.searchQuery);
+        if (state.currency !== 'usd') params.set('cur', state.currency);
+        if (state.selectedCoinId) params.set('coin', state.selectedCoinId);
+
+        const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        window.history.replaceState(null, '', newUrl);
+      }
+
+      // 5. Custom Canvas Sparkline Line Chart with Area Gradient Fill
+      function drawHeroChart(canvas, prices = [], isPositive = true) {
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        if (!prices || prices.length < 2) return;
+
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        const range = (max - min) || 1;
+        const padX = 20;
+        const padY = 20;
+        const plotW = w - padX * 2;
+        const plotH = h - padY * 2;
+
+        const points = prices.map((val, idx) => ({
+          x: padX + (idx / (prices.length - 1)) * plotW,
+          y: padY + plotH - ((val - min) / range) * plotH
+        }));
+
+        // Area Gradient
+        const gradient = ctx.createLinearGradient(0, padY, 0, h);
+        if (isPositive) {
+          gradient.addColorStop(0, 'rgba(16, 185, 129, 0.35)');
+          gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+        } else {
+          gradient.addColorStop(0, 'rgba(239, 68, 68, 0.35)');
+          gradient.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.lineTo(points[points.length - 1].x, h);
+        ctx.lineTo(points[0].x, h);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // Stroke Line
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.strokeStyle = isPositive ? '#10b981' : '#ef4444';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      // 6. Currency Formatter Helper
+      function formatCurrency(val, cur = 'usd') {
+        try {
+          return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: cur.toUpperCase()
+          }).format(val);
+        } catch {
+          return '$' + Number(val).toFixed(2);
+        }
+      }
+
+      // 7. Store Subscription & UI Render
+      store.subscribe(() => {
+        const state = store.getState();
+        const errorBanner = document.getElementById('error-banner');
+        const cardsGrid = document.getElementById('cards-grid');
+        const tbody = document.getElementById('coins-tbody');
+
+        if (state.error) {
+          errorBanner.style.display = 'flex';
+          document.getElementById('error-message').textContent = state.error;
+        } else {
+          errorBanner.style.display = 'none';
+        }
+
+        const filteredCoins = state.coins.filter(c => {
+          const q = state.searchQuery.toLowerCase();
+          return !q || c.name.toLowerCase().includes(q) || c.symbol.toLowerCase().includes(q);
+        });
+
+        // Render Hero Chart for selected coin
+        const selectedCoin = state.coins.find(c => c.id === state.selectedCoinId) || state.coins[0];
+        if (selectedCoin) {
+          document.getElementById('hero-coin-icon').src = selectedCoin.image;
+          document.getElementById('hero-coin-name').textContent = selectedCoin.name;
+          document.getElementById('hero-coin-symbol').textContent = selectedCoin.symbol.toUpperCase();
+          document.getElementById('hero-coin-price').textContent = formatCurrency(selectedCoin.current_price, state.currency);
+
+          const changeVal = selectedCoin.price_change_percentage_24h || 0;
+          const isUp = changeVal >= 0;
+          const changeEl = document.getElementById('hero-coin-change');
+          changeEl.textContent = (isUp ? '+' : '') + changeVal.toFixed(2) + '%';
+          changeEl.className = `change-badge ${isUp ? 'change-up' : 'change-down'}`;
+
+          const sparklineData = selectedCoin.sparkline_in_7d?.price || [selectedCoin.current_price, selectedCoin.current_price];
+          drawHeroChart(document.getElementById('sparkline-chart'), sparklineData, isUp);
+        }
+
+        // Render Cards Grid
+        if (state.isLoading && state.coins.length === 0) {
+          cardsGrid.innerHTML = `
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+          `;
+        } else {
+          cardsGrid.innerHTML = '';
+          filteredCoins.slice(0, 8).forEach(coin => {
+            const isUp = (coin.price_change_percentage_24h || 0) >= 0;
+            const card = document.createElement('div');
+            card.className = `crypto-card ${coin.id === state.selectedCoinId ? 'selected' : ''}`;
+            card.innerHTML = `
+              <div class="card-head">
+                <img src="${coin.image}" alt="${coin.name}" class="card-coin-icon">
+                <div>
+                  <div class="card-name">${coin.name}</div>
+                  <div class="card-symbol">${coin.symbol}</div>
+                </div>
+              </div>
+              <div class="card-price-row">
+                <span class="card-price">${formatCurrency(coin.current_price, state.currency)}</span>
+                <span class="change-badge ${isUp ? 'change-up' : 'change-down'}">
+                  ${isUp ? '+' : ''}${(coin.price_change_percentage_24h || 0).toFixed(2)}%
+                </span>
+              </div>
+            `;
+            card.onclick = () => {
+              store.dispatch({ type: 'SET_SELECTED_COIN', payload: coin.id });
+              updateUrl();
+            };
+            cardsGrid.appendChild(card);
+          });
+        }
+
+        // Render Table
+        tbody.innerHTML = '';
+        filteredCoins.forEach((coin, idx) => {
+          const isUp = (coin.price_change_percentage_24h || 0) >= 0;
+          const tr = document.createElement('tr');
+          tr.className = 'clickable';
+          tr.innerHTML = `
+            <td>${idx + 1}</td>
+            <td>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <img src="${coin.image}" alt="${coin.name}" width="20" height="20">
+                <strong>${coin.name}</strong>
+                <span style="color:var(--text-muted); font-size:11px;">${coin.symbol.toUpperCase()}</span>
+              </div>
+            </td>
+            <td style="font-family:ui-monospace, monospace; font-weight:700;">${formatCurrency(coin.current_price, state.currency)}</td>
+            <td>
+              <span class="change-badge ${isUp ? 'change-up' : 'change-down'}">
+                ${isUp ? '+' : ''}${(coin.price_change_percentage_24h || 0).toFixed(2)}%
+              </span>
+            </td>
+            <td>${formatCurrency(coin.market_cap, state.currency)}</td>
+            <td>${formatCurrency(coin.total_volume, state.currency)}</td>
+          `;
+          tr.onclick = () => {
+            store.dispatch({ type: 'SET_SELECTED_COIN', payload: coin.id });
+            updateUrl();
+          };
+          tbody.appendChild(tr);
+        });
+      });
+
+      // 8. Event Listeners & Debounced Search
+      let debounceTimer = null;
+      document.getElementById('search-input').addEventListener('input', (e) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          store.dispatch({ type: 'SET_SEARCH', payload: e.target.value });
+          updateUrl();
+        }, 250);
+      });
+
+      document.getElementById('currency-select').addEventListener('change', (e) => {
+        const cur = e.target.value;
+        store.dispatch({ type: 'SET_CURRENCY', payload: cur });
+        updateUrl();
+        fetchMarketDataWithRetry(cur);
+      });
+
+      document.getElementById('refresh-btn').onclick = () => {
+        const state = store.getState();
+        sessionStorage.removeItem(`${CACHE_PREFIX}${state.currency}`);
+        fetchMarketDataWithRetry(state.currency);
+      };
+
+      document.getElementById('retry-fetch-btn').onclick = () => {
+        fetchMarketDataWithRetry(store.getState().currency);
+      };
+
+      // Theme Toggle
+      const themeToggleBtn = document.getElementById('theme-toggle-btn');
+      function applyTheme(isDark) {
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        localStorage.setItem('apex_theme', isDark ? 'dark' : 'light');
+      }
+      const savedTheme = localStorage.getItem('apex_theme');
+      if (savedTheme) {
+        applyTheme(savedTheme === 'dark');
+      } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+        applyTheme(false);
+      }
+      themeToggleBtn.onclick = () => {
+        const isCurrentDark = document.documentElement.getAttribute('data-theme') !== 'light';
+        applyTheme(!isCurrentDark);
+      };
+
+      // Initial Mount
+      syncFromUrl();
+    })();
+  </script>
+</body>
+</html>

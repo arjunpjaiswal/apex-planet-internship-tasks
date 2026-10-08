@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexPlanet - Task 2: Custom Video Player & Analytics</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+  <script type="module" src="/src/observability/sentry-global.js"></script>
+  <script type="module">
+    import { initVitals } from '/src/observability/vitals.js';
+    import { mountVitalsOverlay } from '/src/observability/vitals-overlay.js';
+    initVitals();
+    if (location.hostname === 'localhost') mountVitalsOverlay();
+  </script>
+  <script src="/sw-register.js" defer></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #ef4444;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 20px; font-weight: 700; }
+    .badge {
+      font-size: 11px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .main-layout {
+      flex: 1;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1.8fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 980px) {
+      .main-layout { grid-template-columns: 1fr; }
+    }
+
+    /* Video Player Container */
+    .player-container {
+      position: relative;
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      cursor: pointer;
+    }
+
+    /* Flash Overlay Icon */
+    .flash-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.5);
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      font-size: 32px;
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      z-index: 10;
+    }
+    .flash-overlay.active {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    /* Custom Controls Bar */
+    .custom-controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      opacity: 1;
+      transition: opacity 0.3s ease;
+      z-index: 5;
+    }
+    .player-container.hide-controls .custom-controls {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Seek Progress Bar */
+    .seek-container {
+      position: relative;
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+    .buffer-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.4);
+      border-radius: 4px;
+      width: 0%;
+      pointer-events: none;
+    }
+    .progress-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      background: var(--accent);
+      border-radius: 4px;
+      width: 0%;
+      pointer-events: none;
+    }
+    .seek-thumb {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: var(--accent);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .seek-container:hover .seek-thumb {
+      opacity: 1;
+    }
+
+    /* Seek Hover Tooltip */
+    .seek-tooltip {
+      position: absolute;
+      bottom: 20px;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      pointer-events: none;
+      display: none;
+      white-space: nowrap;
+    }
+
+    /* Controls Bottom Row */
+    .controls-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .controls-left, .controls-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ctrl-btn {
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.15s, transform 0.1s;
+    }
+    .ctrl-btn:hover {
+      color: var(--primary);
+      transform: scale(1.1);
+    }
+
+    .time-display {
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+      color: #cbd5e1;
+    }
+
+    .volume-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .volume-slider {
+      width: 70px;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .speed-select {
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* Analytics Sidebar */
+    .analytics-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .panel-title {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    .stat-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .stat-val {
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 4px;
+      color: var(--text);
+    }
+
+    /* Canvas Engagement Chart */
+    .chart-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+    .chart-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+    canvas#engagement-chart {
+      width: 100%;
+      height: 120px;
+      display: block;
+    }
+
+    .shortcuts-guide {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .shortcut-kbd {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Custom Video Player</h1>
+      <span class="badge">Task 2</span>
+    </div>
+    <div class="time-display" id="autosave-indicator">Analytics auto-saved (5s)</div>
+  </header>
+
+  <div class="main-layout">
+    <!-- Player Left Column -->
+    <div>
+      <div class="player-container" id="player-container">
+        <video id="video-element" preload="metadata" crossorigin="anonymous">
+          <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+          Your browser does not support HTML5 video.
+        </video>
+
+        <!-- Flash Icon Overlay -->
+        <div class="flash-overlay" id="flash-overlay">▶</div>
+
+        <!-- Custom Controls -->
+        <div class="custom-controls" id="custom-controls">
+          <!-- Seek Bar -->
+          <div class="seek-container" id="seek-container">
+            <div class="buffer-bar" id="buffer-bar"></div>
+            <div class="progress-bar" id="progress-bar"></div>
+            <div class="seek-thumb" id="seek-thumb"></div>
+            <div class="seek-tooltip" id="seek-tooltip">0:00</div>
+          </div>
+
+          <!-- Buttons Row -->
+          <div class="controls-row">
+            <div class="controls-left">
+              <button class="ctrl-btn" id="play-pause-btn" title="Play/Pause (Space)">▶</button>
+              <div class="volume-group">
+                <button class="ctrl-btn" id="mute-btn" title="Mute (M)">🔊</button>
+                <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="1">
+              </div>
+              <span class="time-display" id="time-display">0:00 / 0:00</span>
+            </div>
+
+            <div class="controls-right">
+              <select id="speed-select" class="speed-select" title="Playback Speed">
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1" selected>1.0x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2.0x</option>
+              </select>
+              <button class="ctrl-btn" id="pip-btn" title="Picture in Picture">🗗</button>
+              <button class="ctrl-btn" id="fullscreen-btn" title="Fullscreen (F)">⛶</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Right Column -->
+    <div class="analytics-panel">
+      <div class="panel-title">
+        <span>Session Analytics</span>
+        <button id="reset-analytics-btn" class="ctrl-btn" style="font-size: 12px; color: var(--text-muted);" title="Reset Metrics">Reset</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Watch Time</div>
+          <div class="stat-val" id="stat-watch-time">0s</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Completion</div>
+          <div class="stat-val" id="stat-completion">0%</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Pause Count</div>
+          <div class="stat-val" id="stat-pauses">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Seek Count</div>
+          <div class="stat-val" id="stat-seeks">0</div>
+        </div>
+      </div>
+
+      <div class="chart-box">
+        <div class="chart-header">
+          <span>Heatmap / Engagement Slices (60 buckets)</span>
+          <span id="stat-avg-speed">Speed: 1.0x</span>
+        </div>
+        <canvas id="engagement-chart" width="360" height="120"></canvas>
+      </div>
+
+      <div class="shortcuts-guide">
+        <div style="font-weight: 700; margin-bottom: 6px; color: var(--text);">Keyboard Shortcuts:</div>
+        <div><span class="shortcut-kbd">Space</span> Play / Pause</div>
+        <div><span class="shortcut-kbd">←</span> / <span class="shortcut-kbd">→</span> Seek 10s backward / forward</div>
+        <div><span class="shortcut-kbd">↑</span> / <span class="shortcut-kbd">↓</span> Volume up / down (10%)</div>
+        <div><span class="shortcut-kbd">M</span> Toggle Mute &nbsp;|&nbsp; <span class="shortcut-kbd">F</span> Toggle Fullscreen</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const video = document.getElementById('video-element');
+      const container = document.getElementById('player-container');
+      const playPauseBtn = document.getElementById('play-pause-btn');
+      const muteBtn = document.getElementById('mute-btn');
+      const volumeSlider = document.getElementById('volume-slider');
+      const timeDisplay = document.getElementById('time-display');
+      const speedSelect = document.getElementById('speed-select');
+      const pipBtn = document.getElementById('pip-btn');
+      const fullscreenBtn = document.getElementById('fullscreen-btn');
+      const seekContainer = document.getElementById('seek-container');
+      const progressBar = document.getElementById('progress-bar');
+      const bufferBar = document.getElementById('buffer-bar');
+      const seekThumb = document.getElementById('seek-thumb');
+      const seekTooltip = document.getElementById('seek-tooltip');
+      const flashOverlay = document.getElementById('flash-overlay');
+
+      const statWatchTime = document.getElementById('stat-watch-time');
+      const statCompletion = document.getElementById('stat-completion');
+      const statPauses = document.getElementById('stat-pauses');
+      const statSeeks = document.getElementById('stat-seeks');
+      const statAvgSpeed = document.getElementById('stat-avg-speed');
+      const chartCanvas = document.getElementById('engagement-chart');
+      const chartCtx = chartCanvas.getContext('2d');
+
+      const STORAGE_KEY = 'apexplanet_video_analytics';
+
+      // Analytics State
+      const NUM_BUCKETS = 60;
+      let analytics = loadAnalytics();
+
+      function loadAnalytics() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) return JSON.parse(raw);
+        } catch (e) {}
+        return {
+          watchTimeSeconds: 0,
+          pauseCount: 0,
+          seekCount: 0,
+          highestCompletionPct: 0,
+          speedSamples: [1.0],
+          buckets: new Array(NUM_BUCKETS).fill(0)
+        };
+      }
+
+      function saveAnalytics() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(analytics));
+        } catch (e) {}
+      }
+
+      // Throttled 5s save
+      setInterval(saveAnalytics, 5000);
+
+      // Flash Icon Helper
+      let flashTimeout = null;
+      function showFlash(icon) {
+        flashOverlay.textContent = icon;
+        flashOverlay.classList.add('active');
+        clearTimeout(flashTimeout);
+        flashTimeout = setTimeout(() => {
+          flashOverlay.classList.remove('active');
+        }, 350);
+      }
+
+      function formatTime(secs) {
+        if (isNaN(secs) || secs < 0) return '0:00';
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        return m + ':' + (s < 10 ? '0' : '') + s;
+      }
+
+      // Play / Pause
+      function togglePlay() {
+        if (video.paused || video.ended) {
+          video.play();
+          playPauseBtn.textContent = '⏸';
+          showFlash('▶');
+        } else {
+          video.pause();
+          playPauseBtn.textContent = '▶';
+          showFlash('⏸');
+          analytics.pauseCount++;
+          updateUI();
+        }
+      }
+
+      playPauseBtn.addEventListener('click', togglePlay);
+      video.addEventListener('click', togglePlay);
+
+      // Time & Progress Update
+      let lastPlayTime = null;
+      video.addEventListener('timeupdate', () => {
+        const cur = video.currentTime;
+        const dur = video.duration || 1;
+        const pct = (cur / dur) * 100;
+        progressBar.style.width = pct + '%';
+        seekThumb.style.left = pct + '%';
+        timeDisplay.textContent = formatTime(cur) + ' / ' + formatTime(dur);
+
+        // Completion track
+        if (pct > analytics.highestCompletionPct) {
+          analytics.highestCompletionPct = Math.min(100, Math.round(pct));
+        }
+
+        // Watch time & bucket engagement
+        if (!video.paused && lastPlayTime !== null) {
+          const delta = (performance.now() - lastPlayTime) / 1000;
+          if (delta > 0 && delta < 2) {
+            analytics.watchTimeSeconds += delta;
+            const bucketIndex = Math.min(NUM_BUCKETS - 1, Math.floor((cur / dur) * NUM_BUCKETS));
+            analytics.buckets[bucketIndex] = (analytics.buckets[bucketIndex] || 0) + delta;
+          }
+        }
+        lastPlayTime = performance.now();
+
+        // Buffer bar
+        if (video.buffered.length > 0) {
+          for (let i = 0; i < video.buffered.length; i++) {
+            if (video.buffered.start(i) <= cur && cur <= video.buffered.end(i)) {
+              const bufPct = (video.buffered.end(i) / dur) * 100;
+              bufferBar.style.width = bufPct + '%';
+              break;
+            }
+          }
+        }
+
+        updateUI();
+      });
+
+      video.addEventListener('play', () => {
+        playPauseBtn.textContent = '⏸';
+        lastPlayTime = performance.now();
+      });
+
+      video.addEventListener('pause', () => {
+        playPauseBtn.textContent = '▶';
+        lastPlayTime = null;
+      });
+
+      // Seek Bar Click / Drag
+      function seek(e) {
+        const rect = seekContainer.getBoundingClientRect();
+        const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        video.currentTime = pos * (video.duration || 0);
+        analytics.seekCount++;
+        showFlash('⏩');
+        updateUI();
+      }
+
+      seekContainer.addEventListener('click', seek);
+
+      // Seek Hover Tooltip
+      seekContainer.addEventListener('mousemove', (e) => {
+        const rect = seekContainer.getBoundingClientRect();
+        const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const hoverTime = pos * (video.duration || 0);
+        seekTooltip.style.display = 'block';
+        seekTooltip.style.left = (pos * 100) + '%';
+        seekTooltip.textContent = formatTime(hoverTime);
+      });
+
+      seekContainer.addEventListener('mouseleave', () => {
+        seekTooltip.style.display = 'none';
+      });
+
+      // Volume & Mute
+      function setVolume(v) {
+        video.volume = Math.max(0, Math.min(1, v));
+        volumeSlider.value = video.volume;
+        if (video.volume === 0) {
+          video.muted = true;
+          muteBtn.textContent = '🔇';
+        } else {
+          video.muted = false;
+          muteBtn.textContent = video.volume > 0.5 ? '🔊' : '🔉';
+        }
+      }
+
+      volumeSlider.addEventListener('input', (e) => {
+        setVolume(parseFloat(e.target.value));
+      });
+
+      muteBtn.addEventListener('click', () => {
+        video.muted = !video.muted;
+        if (video.muted) {
+          muteBtn.textContent = '🔇';
+          volumeSlider.value = 0;
+          showFlash('🔇');
+        } else {
+          muteBtn.textContent = video.volume > 0.5 ? '🔊' : '🔉';
+          volumeSlider.value = video.volume || 0.5;
+          showFlash('🔊');
+        }
+      });
+
+      // Playback Speed
+      speedSelect.addEventListener('change', (e) => {
+        const rate = parseFloat(e.target.value);
+        video.playbackRate = rate;
+        analytics.speedSamples.push(rate);
+        showFlash(rate + 'x');
+        updateUI();
+      });
+
+      // Picture in Picture
+      pipBtn.addEventListener('click', async () => {
+        try {
+          if (document.pictureInPictureElement) {
+            await document.exitPictureInPicture();
+          } else if (document.pictureInPictureEnabled) {
+            await video.requestPictureInPicture();
+          }
+        } catch (err) {
+          console.warn('PiP error', err);
+        }
+      });
+
+      // Fullscreen
+      fullscreenBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+          fullscreenBtn.textContent = '⛷';
+        } else {
+          document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+          fullscreenBtn.textContent = '⛶';
+        }
+      });
+
+      // Keyboard Controls
+      window.addEventListener('keydown', (e) => {
+        if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+        switch (e.key) {
+          case ' ':
+            e.preventDefault();
+            togglePlay();
+            break;
+          case 'ArrowLeft':
+            e.preventDefault();
+            video.currentTime = Math.max(0, video.currentTime - 10);
+            analytics.seekCount++;
+            showFlash('-10s');
+            updateUI();
+            break;
+          case 'ArrowRight':
+            e.preventDefault();
+            video.currentTime = Math.min(video.duration || 0, video.currentTime + 10);
+            analytics.seekCount++;
+            showFlash('+10s');
+            updateUI();
+            break;
+          case 'ArrowUp':
+            e.preventDefault();
+            setVolume(video.volume + 0.1);
+            showFlash(Math.round(video.volume * 100) + '%');
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            setVolume(video.volume - 0.1);
+            showFlash(Math.round(video.volume * 100) + '%');
+            break;
+          case 'm':
+          case 'M':
+            muteBtn.click();
+            break;
+          case 'f':
+          case 'F':
+            fullscreenBtn.click();
+            break;
+        }
+      });
+
+      // Render Engagement Chart on Canvas
+      function drawChart() {
+        const w = chartCanvas.width;
+        const h = chartCanvas.height;
+        chartCtx.clearRect(0, 0, w, h);
+
+        const buckets = analytics.buckets;
+        const maxVal = Math.max(1, ...buckets);
+        const barWidth = w / NUM_BUCKETS;
+
+        for (let i = 0; i < NUM_BUCKETS; i++) {
+          const val = buckets[i] || 0;
+          const barHeight = (val / maxVal) * (h - 20);
+          const x = i * barWidth;
+          const y = h - barHeight - 2;
+
+          // Gradient color by intensity
+          const ratio = val / maxVal;
+          chartCtx.fillStyle = ratio > 0.6 ? '#ef4444' : ratio > 0.2 ? '#3b82f6' : '#1e293b';
+          chartCtx.fillRect(x, y, Math.max(1, barWidth - 1), barHeight);
+        }
+
+        // Current scrubber line
+        const dur = video.duration || 1;
+        const curPct = video.currentTime / dur;
+        const scrubberX = curPct * w;
+        chartCtx.strokeStyle = '#ffffff';
+        chartCtx.lineWidth = 1.5;
+        chartCtx.beginPath();
+        chartCtx.moveTo(scrubberX, 0);
+        chartCtx.lineTo(scrubberX, h);
+        chartCtx.stroke();
+      }
+
+      function updateUI() {
+        statWatchTime.textContent = Math.round(analytics.watchTimeSeconds) + 's';
+        statCompletion.textContent = analytics.highestCompletionPct + '%';
+        statPauses.textContent = analytics.pauseCount;
+        statSeeks.textContent = analytics.seekCount;
+
+        const sum = analytics.speedSamples.reduce((a, b) => a + b, 0);
+        const avg = (sum / analytics.speedSamples.length).toFixed(1);
+        statAvgSpeed.textContent = 'Speed: ' + avg + 'x';
+
+        drawChart();
+      }
+
+      document.getElementById('reset-analytics-btn').onclick = () => {
+        analytics = {
+          watchTimeSeconds: 0,
+          pauseCount: 0,
+          seekCount: 0,
+          highestCompletionPct: 0,
+          speedSamples: [video.playbackRate || 1.0],
+          buckets: new Array(NUM_BUCKETS).fill(0)
+        };
+        saveAnalytics();
+        updateUI();
+      };
+
+      // Controls Hide on Inactivity
+      let controlsTimer = null;
+      container.addEventListener('mousemove', () => {
+        container.classList.remove('hide-controls');
+        clearTimeout(controlsTimer);
+        controlsTimer = setTimeout(() => {
+          if (!video.paused) container.classList.add('hide-controls');
+        }, 3000);
+      });
+
+      // Initial Mount
+      updateUI();
+    })();
+  </script>
+</body>
+</html>

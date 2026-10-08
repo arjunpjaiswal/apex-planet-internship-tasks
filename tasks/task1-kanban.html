@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexPlanet - Task 1: Kanban Board</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+  <script type="module" src="/src/observability/sentry-global.js"></script>
+  <script type="module">
+    import { initVitals } from '/src/observability/vitals.js';
+    import { mountVitalsOverlay } from '/src/observability/vitals-overlay.js';
+    initVitals();
+    if (location.hostname === 'localhost') mountVitalsOverlay();
+  </script>
+  <script src="/sw-register.js" defer></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-hover: #334155;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --priority-low: #10b981;
+      --priority-med: #f59e0b;
+      --priority-high: #ef4444;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 { font-size: 20px; font-weight: 700; }
+    .badge {
+      font-size: 11px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .search-box, .filter-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+    }
+    .search-box:focus, .filter-select:focus {
+      border-color: var(--primary);
+    }
+
+    .btn {
+      background: var(--surface-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:hover:not(:disabled) {
+      background: #475569;
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .board-container {
+      flex: 1;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      overflow-x: auto;
+    }
+
+    @media (max-width: 900px) {
+      .board-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .column {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 120px);
+    }
+
+    .column-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .column-title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .count-badge {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      color: var(--text-muted);
+    }
+
+    .card-list {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 120px;
+      transition: background 0.15s;
+    }
+    .card-list.drag-over {
+      background: rgba(59, 130, 246, 0.08);
+      border-radius: 4px;
+    }
+
+    .kanban-card {
+      background: #111827;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      cursor: grab;
+      user-select: none;
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+      position: relative;
+    }
+    .kanban-card:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      border-color: #475569;
+    }
+    .kanban-card.dragging {
+      opacity: 0.4;
+      cursor: grabbing;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .priority-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+    }
+    .priority-low { background: rgba(16, 185, 129, 0.15); color: var(--priority-low); }
+    .priority-medium { background: rgba(245, 158, 11, 0.15); color: var(--priority-med); }
+    .priority-high { background: rgba(239, 68, 68, 0.15); color: var(--priority-high); }
+
+    .card-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      word-break: break-word;
+      margin-bottom: 10px;
+    }
+
+    .card-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .btn-icon {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .btn-icon:hover {
+      color: var(--text);
+      background: var(--surface-hover);
+    }
+    .btn-icon.delete:hover {
+      color: var(--priority-high);
+    }
+
+    /* Modal Dialog */
+    dialog {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      width: 90%;
+      max-width: 440px;
+      margin: auto;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+    }
+    .dialog-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .dialog-header h3 { font-size: 18px; }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    .form-group input, .form-group textarea, .form-group select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      outline: none;
+      font-family: inherit;
+    }
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      border-color: var(--primary);
+    }
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Kanban Board</h1>
+      <span class="badge">Task 1</span>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="search-input" class="search-box" placeholder="Search cards..." />
+      <select id="priority-filter" class="filter-select">
+        <option value="all">All Priorities</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <button id="undo-btn" class="btn" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
+      <button id="redo-btn" class="btn" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
+      <button id="export-btn" class="btn">⬇ Export JSON</button>
+      <label class="btn" style="cursor: pointer;">
+        ⬆ Import JSON
+        <input type="file" id="import-input" accept=".json" style="display: none;" />
+      </label>
+      <button id="add-card-btn" class="btn btn-primary">+ Add Card</button>
+    </div>
+  </header>
+
+  <main class="board-container" id="board-container">
+    <!-- Columns rendered by JS -->
+  </main>
+
+  <!-- Dialog for Add/Edit -->
+  <dialog id="card-dialog">
+    <div class="dialog-header">
+      <h3 id="dialog-title">Add Card</h3>
+      <button type="button" class="btn-icon" id="dialog-close-x">✕</button>
+    </div>
+    <form id="card-form" method="dialog">
+      <input type="hidden" id="card-id" />
+      <input type="hidden" id="card-column" value="todo" />
+      <div class="form-group">
+        <label for="card-title">Title</label>
+        <input type="text" id="card-title" required placeholder="Card summary..." />
+      </div>
+      <div class="form-group">
+        <label for="card-desc">Description</label>
+        <textarea id="card-desc" placeholder="Details and acceptance criteria..."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="card-priority">Priority</label>
+        <select id="card-priority">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="dialog-cancel-btn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="card-save-btn">Save Card</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    (function() {
+      // Utilities
+      function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function uid() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'card_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 9);
+      }
+
+      const STORAGE_KEY = 'apexplanet_kanban_board';
+      const defaultState = {
+        columns: [
+          {
+            id: 'todo',
+            title: 'To Do',
+            cards: [
+              { id: 'c-1', title: 'Setup Storybook Design System', description: 'Configure HTML-vite with addon-a11y and themes', priority: 'high', createdAt: Date.now() },
+              { id: 'c-2', title: 'Implement Vitest Test Suites', description: 'Reach 80% coverage on core logic modules', priority: 'medium', createdAt: Date.now() }
+            ]
+          },
+          {
+            id: 'in-progress',
+            title: 'In Progress',
+            cards: [
+              { id: 'c-3', title: 'PWA Service Worker offline caching', description: 'Implement cache-first and SWR strategy for assets and API', priority: 'high', createdAt: Date.now() }
+            ]
+          },
+          {
+            id: 'done',
+            title: 'Done',
+            cards: [
+              { id: 'c-4', title: 'Repository structure initialization', description: 'Created standard folder hierarchy', priority: 'low', createdAt: Date.now() }
+            ]
+          }
+        ]
+      };
+
+      // State & History Management
+      let past = [];
+      let present = loadBoard();
+      let future = [];
+      const MAX_HISTORY = 50;
+
+      function loadBoard() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          return raw ? JSON.parse(raw) : defaultState;
+        } catch {
+          return defaultState;
+        }
+      }
+
+      function saveBoard(state) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (e) {
+          console.error('Failed to save to localStorage', e);
+        }
+      }
+
+      function setBoardState(newState, recordHistory = true) {
+        if (recordHistory) {
+          past.push(JSON.parse(JSON.stringify(present)));
+          if (past.length > MAX_HISTORY) past.shift();
+          future = [];
+        }
+        present = JSON.parse(JSON.stringify(newState));
+        saveBoard(present);
+        updateHistoryButtons();
+        render();
+      }
+
+      function undo() {
+        if (!past.length) return;
+        future.unshift(JSON.parse(JSON.stringify(present)));
+        present = past.pop();
+        saveBoard(present);
+        updateHistoryButtons();
+        render();
+      }
+
+      function redo() {
+        if (!future.length) return;
+        past.push(JSON.parse(JSON.stringify(present)));
+        present = future.shift();
+        saveBoard(present);
+        updateHistoryButtons();
+        render();
+      }
+
+      function updateHistoryButtons() {
+        document.getElementById('undo-btn').disabled = past.length === 0;
+        document.getElementById('redo-btn').disabled = future.length === 0;
+      }
+
+      // Drag & Drop tracking
+      let draggedCardId = null;
+      let sourceColId = null;
+
+      // Filtering
+      let searchFilter = '';
+      let priorityFilter = 'all';
+
+      function render() {
+        const boardEl = document.getElementById('board-container');
+        boardEl.innerHTML = '';
+
+        present.columns.forEach(col => {
+          const colEl = document.createElement('div');
+          colEl.className = 'column';
+          colEl.dataset.colId = col.id;
+
+          // Filter cards
+          const filteredCards = col.cards.filter(card => {
+            const matchesSearch = !searchFilter ||
+              card.title.toLowerCase().includes(searchFilter) ||
+              (card.description && card.description.toLowerCase().includes(searchFilter));
+            const matchesPriority = priorityFilter === 'all' || card.priority === priorityFilter;
+            return matchesSearch && matchesPriority;
+          });
+
+          colEl.innerHTML = `
+            <div class="column-header">
+              <div class="column-title">
+                ${escapeHtml(col.title)}
+                <span class="count-badge">${filteredCards.length}</span>
+              </div>
+              <button class="btn-icon add-card-col" title="Add Card to ${escapeHtml(col.title)}">+</button>
+            </div>
+            <div class="card-list" data-col-id="${col.id}"></div>
+          `;
+
+          const listEl = colEl.querySelector('.card-list');
+
+          // Native DnD onto Column List
+          listEl.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            listEl.classList.add('drag-over');
+          });
+
+          listEl.addEventListener('dragleave', () => {
+            listEl.classList.remove('drag-over');
+          });
+
+          listEl.addEventListener('drop', (e) => {
+            e.preventDefault();
+            listEl.classList.remove('drag-over');
+            if (!draggedCardId) return;
+
+            // Target column
+            const targetColId = col.id;
+            // Determine drop index based on mouse position relative to card elements
+            const afterElement = getDragAfterElement(listEl, e.clientY);
+            let targetIndex = null;
+            if (afterElement) {
+              const afterCardId = afterElement.dataset.cardId;
+              targetIndex = col.cards.findIndex(c => c.id === afterCardId);
+            }
+
+            moveCard(draggedCardId, targetColId, targetIndex);
+          });
+
+          // Render Cards
+          filteredCards.forEach(card => {
+            const cardEl = document.createElement('div');
+            cardEl.className = 'kanban-card';
+            cardEl.draggable = true;
+            cardEl.dataset.cardId = card.id;
+
+            cardEl.innerHTML = `
+              <div class="card-top">
+                <span class="card-title">${escapeHtml(card.title)}</span>
+                <span class="priority-badge priority-${card.priority}">${escapeHtml(card.priority)}</span>
+              </div>
+              ${card.description ? `<p class="card-desc">${escapeHtml(card.description)}</p>` : ''}
+              <div class="card-actions">
+                <button class="btn-icon edit-card-btn" title="Edit">✏️</button>
+                <button class="btn-icon delete delete-card-btn" title="Delete">🗑️</button>
+              </div>
+            `;
+
+            // Drag Events
+            cardEl.addEventListener('dragstart', (e) => {
+              draggedCardId = card.id;
+              sourceColId = col.id;
+              cardEl.classList.add('dragging');
+              e.dataTransfer.setData('text/plain', card.id);
+            });
+
+            cardEl.addEventListener('dragend', () => {
+              cardEl.classList.remove('dragging');
+              draggedCardId = null;
+              sourceColId = null;
+            });
+
+            // Card Action Listeners
+            cardEl.querySelector('.edit-card-btn').addEventListener('click', (e) => {
+              e.stopPropagation();
+              openEditModal(card, col.id);
+            });
+
+            cardEl.querySelector('.delete-card-btn').addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (confirm(`Delete card "${card.title}"?`)) {
+                deleteCard(card.id);
+              }
+            });
+
+            listEl.appendChild(cardEl);
+          });
+
+          // Add card button on header
+          colEl.querySelector('.add-card-col').addEventListener('click', () => {
+            openAddModal(col.id);
+          });
+
+          boardEl.appendChild(colEl);
+        });
+      }
+
+      function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.kanban-card:not(.dragging)')];
+        return draggableElements.reduce((closest, child) => {
+          const box = child.getBoundingClientRect();
+          const offset = y - box.top - box.height / 2;
+          if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+          } else {
+            return closest;
+          }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+      }
+
+      function moveCard(cardId, targetColId, targetIndex) {
+        let card = null;
+        const newCols = present.columns.map(col => {
+          const found = col.cards.find(c => c.id === cardId);
+          if (found) {
+            card = found;
+            return { ...col, cards: col.cards.filter(c => c.id !== cardId) };
+          }
+          return col;
+        });
+
+        if (!card) return;
+
+        const updatedCols = newCols.map(col => {
+          if (col.id === targetColId) {
+            const cards = [...col.cards];
+            if (targetIndex === null || targetIndex < 0 || targetIndex >= cards.length) {
+              cards.push(card);
+            } else {
+              cards.splice(targetIndex, 0, card);
+            }
+            return { ...col, cards };
+          }
+          return col;
+        });
+
+        setBoardState({ columns: updatedCols });
+      }
+
+      function deleteCard(cardId) {
+        const updatedCols = present.columns.map(col => ({
+          ...col,
+          cards: col.cards.filter(c => c.id !== cardId)
+        }));
+        setBoardState({ columns: updatedCols });
+      }
+
+      // Dialog Modal Management
+      const dialog = document.getElementById('card-dialog');
+      const dialogForm = document.getElementById('card-form');
+      const dialogTitle = document.getElementById('dialog-title');
+      const idInput = document.getElementById('card-id');
+      const colInput = document.getElementById('card-column');
+      const titleInput = document.getElementById('card-title');
+      const descInput = document.getElementById('card-desc');
+      const priorityInput = document.getElementById('card-priority');
+
+      function openAddModal(colId = 'todo') {
+        dialogTitle.textContent = 'Add Card';
+        idInput.value = '';
+        colInput.value = colId;
+        titleInput.value = '';
+        descInput.value = '';
+        priorityInput.value = 'medium';
+        dialog.showModal();
+        titleInput.focus();
+      }
+
+      function openEditModal(card, colId) {
+        dialogTitle.textContent = 'Edit Card';
+        idInput.value = card.id;
+        colInput.value = colId;
+        titleInput.value = card.title;
+        descInput.value = card.description || '';
+        priorityInput.value = card.priority;
+        dialog.showModal();
+        titleInput.focus();
+      }
+
+      document.getElementById('dialog-close-x').onclick = () => dialog.close();
+      document.getElementById('dialog-cancel-btn').onclick = () => dialog.close();
+
+      dialogForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const id = idInput.value;
+        const colId = colInput.value;
+        const title = titleInput.value.trim();
+        const desc = descInput.value.trim();
+        const priority = priorityInput.value;
+
+        if (!title) return;
+
+        if (id) {
+          // Edit
+          const updatedCols = present.columns.map(col => ({
+            ...col,
+            cards: col.cards.map(c => c.id === id ? { ...c, title, description: desc, priority } : c)
+          }));
+          setBoardState({ columns: updatedCols });
+        } else {
+          // Add
+          const newCard = {
+            id: uid(),
+            title,
+            description: desc,
+            priority,
+            createdAt: Date.now()
+          };
+          const updatedCols = present.columns.map(col => {
+            if (col.id === colId) {
+              return { ...col, cards: [...col.cards, newCard] };
+            }
+            return col;
+          });
+          setBoardState({ columns: updatedCols });
+        }
+
+        dialog.close();
+      });
+
+      // Keyboard Undo/Redo Shortcuts
+      window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+          if (e.shiftKey) {
+            e.preventDefault();
+            redo();
+          } else {
+            e.preventDefault();
+            undo();
+          }
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+          e.preventDefault();
+          redo();
+        }
+      });
+
+      // Toolbar event listeners
+      document.getElementById('undo-btn').onclick = undo;
+      document.getElementById('redo-btn').onclick = redo;
+      document.getElementById('add-card-btn').onclick = () => openAddModal('todo');
+
+      document.getElementById('search-input').addEventListener('input', (e) => {
+        searchFilter = e.target.value.trim().toLowerCase();
+        render();
+      });
+
+      document.getElementById('priority-filter').addEventListener('change', (e) => {
+        priorityFilter = e.target.value;
+        render();
+      });
+
+      // Export / Import JSON
+      document.getElementById('export-btn').onclick = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(present, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", "apexplanet-kanban-board.json");
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+      };
+
+      document.getElementById('import-input').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const imported = JSON.parse(event.target.result);
+            if (imported.columns && Array.isArray(imported.columns)) {
+              setBoardState(imported);
+              alert('Board imported successfully!');
+            } else {
+              alert('Invalid board JSON structure.');
+            }
+          } catch (err) {
+            alert('Failed to parse JSON file.');
+          }
+        };
+        reader.readAsText(file);
+      });
+
+      // Initial Mount
+      updateHistoryButtons();
+      render();
+    })();
+  </script>
+</body>
+</html>

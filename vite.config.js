@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+  base: './',
   publicDir: 'public',
   server: {
     port: 5173
@@ -9,7 +10,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'public/index.html'),
+        main: resolve(__dirname, 'index.html'),
         task1: resolve(__dirname, 'tasks/task1-kanban.html'),
         task2: resolve(__dirname, 'tasks/task2-video-player.html'),
         task3: resolve(__dirname, 'tasks/task3-expense-tracker.html'),

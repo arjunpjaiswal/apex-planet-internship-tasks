@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApexPlanet - Task 4: Virtual Scrolling Chat (10,000 Messages)</title>
+  <link rel="manifest" href="../manifest.json">
+  <meta name="theme-color" content="#3b82f6">
+  <script src="../sw-register.js" defer></script>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #1e293b;
+      --surface-hover: #334155;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --item-height: 60px;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; font-weight: 700; }
+    .badge {
+      font-size: 11px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .telemetry {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: ui-monospace, monospace;
+    }
+    .dom-counter {
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    .chat-wrapper {
+      flex: 1;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .search-bar {
+      padding: 12px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .search-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+    }
+    .search-input:focus { border-color: var(--primary); }
+
+    /* Virtual Scroll Viewport */
+    .viewport {
+      flex: 1;
+      overflow-y: auto;
+      position: relative;
+      background: var(--bg);
+      scroll-behavior: auto;
+    }
+
+    .spacer {
+      position: relative;
+      width: 100%;
+      pointer-events: none;
+    }
+
+    .visible-items-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      pointer-events: auto;
+    }
+
+    /* Message Item (Fixed 60px height) */
+    .msg-item {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+      user-select: text;
+      transition: background 0.1s;
+    }
+    .msg-item:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      flex-shrink: 0;
+      color: #fff;
+    }
+
+    .msg-content {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .sender-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .msg-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .receipt {
+      font-size: 11px;
+      color: var(--primary);
+    }
+    .receipt.sending {
+      color: var(--text-muted);
+    }
+
+    .msg-text {
+      font-size: 13px;
+      color: #cbd5e1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    mark.highlight {
+      background: #fbbf24;
+      color: #0f172a;
+      border-radius: 2px;
+      padding: 0 2px;
+    }
+
+    .reactions-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .react-pill {
+      font-size: 11px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+      border-radius: 9999px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      user-select: none;
+    }
+    .react-pill.active {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.2);
+    }
+
+    /* Typing Indicator & Floating Pill */
+    .typing-bar {
+      position: absolute;
+      bottom: 70px;
+      left: 20px;
+      background: rgba(30, 41, 59, 0.95);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: none;
+      align-items: center;
+      gap: 6px;
+      z-index: 10;
+      backdrop-filter: blur(4px);
+    }
+    .typing-dots span {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--primary);
+      animation: bounce 1.2s infinite ease-in-out;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-4px); }
+    }
+
+    .new-msgs-pill {
+      position: absolute;
+      bottom: 75px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--primary);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      display: none;
+      align-items: center;
+      gap: 6px;
+      z-index: 15;
+    }
+
+    /* Chat Input Form */
+    .input-form {
+      padding: 12px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .chat-text-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      outline: none;
+    }
+    .chat-text-input:focus { border-color: var(--primary); }
+
+    .btn-send {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-send:hover { background: var(--primary-hover); }
+  </style>
+  <script type="module" crossorigin src="../assets/task4-DdIs-PyQ.js"></script>
+  <link rel="modulepreload" crossorigin href="../assets/vitals-overlay-BKuI-gz_.js">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <a href="../index.html" class="btn-send" style="text-decoration: none; padding: 6px 11px; font-size: 12px; background: var(--surface-hover); border: 1px solid var(--border); margin-right: 4px;">&larr; Portfolio Hub</a>
+      <h1>Virtual Chat (10,000 Messages)</h1>
+      <span class="badge">Task 4</span>
+    </div>
+    <div class="telemetry">
+      <span>Total: <strong id="total-msgs-count">10,000</strong></span>
+      <span>DOM Nodes: <span class="dom-counter" id="visible-nodes-count">~30</span></span>
+    </div>
+  </header>
+
+  <div class="chat-wrapper">
+    <div class="search-bar">
+      <input type="text" id="search-input" class="search-input" placeholder="Search across 10,000 messages (regex highlighted)...">
+    </div>
+
+    <!-- Virtual Viewport -->
+    <div class="viewport" id="viewport">
+      <div class="spacer" id="spacer"></div>
+      <div class="visible-items-layer" id="visible-layer"></div>
+    </div>
+
+    <!-- Typing Indicator -->
+    <div class="typing-bar" id="typing-bar">
+      <span id="typing-author">Alex</span> is typing
+      <div class="typing-dots">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+
+    <!-- New Messages Floating Pill -->
+    <div class="new-msgs-pill" id="new-msgs-pill">
+      ⬇ New Messages Received
+    </div>
+
+    <!-- Send Form -->
+    <form class="input-form" id="input-form">
+      <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message (Optimistic UI)..." autocomplete="off" required>
+      <button type="submit" class="btn-send">Send</button>
+    </form>
+  </div>
+
+  <script>
+    (function() {
+      const ITEM_HEIGHT = 60;
+      const BUFFER_COUNT = 5;
+      const TOTAL_MOCK = 10000;
+
+      const viewport = document.getElementById('viewport');
+      const spacer = document.getElementById('spacer');
+      const visibleLayer = document.getElementById('visible-layer');
+      const searchInput = document.getElementById('search-input');
+      const inputForm = document.getElementById('input-form');
+      const chatInput = document.getElementById('chat-input');
+      const typingBar = document.getElementById('typing-bar');
+      const typingAuthor = document.getElementById('typing-author');
+      const newMsgsPill = document.getElementById('new-msgs-pill');
+      const visibleNodesCount = document.getElementById('visible-nodes-count');
+      const totalMsgsCount = document.getElementById('total-msgs-count');
+
+      const mockSenders = [
+        { name: 'Arjun (You)', color: '#3b82f6' },
+        { name: 'Sarah Tech Lead', color: '#10b981' },
+        { name: 'Mentor David', color: '#8b5cf6' },
+        { name: 'Alex Backend', color: '#f59e0b' },
+        { name: 'DevOps Bot', color: '#64748b' }
+      ];
+
+      const mockPhrases = [
+        'Checked the PR for Core Web Vitals optimization.',
+        'Can we ensure the service worker handles stale-while-revalidate for CoinGecko?',
+        'Storybook stories look great with the new theme decorator.',
+        'Vitest test coverage reached 86% on the store module.',
+        'Remember to verify the custom canvas chart on mobile screens.',
+        'Great progress on the virtual scroll DOM node capping!',
+        'Let us benchmark the 10,000 items scroll FPS in Chrome DevTools.',
+        'Is the Sentry error boundary rethrowing as expected?'
+      ];
+
+      // 1. Generate 10,000 mock messages
+      let allMessages = [];
+      const baseTime = Date.now() - 10000 * 60 * 1000;
+
+      for (let i = 0; i < TOTAL_MOCK; i++) {
+        const sender = mockSenders[i % mockSenders.length];
+        const phrase = mockPhrases[i % mockPhrases.length];
+        allMessages.push({
+          id: i + 1,
+          sender: sender.name,
+          color: sender.color,
+          text: `#${i + 1}: ${phrase}`,
+          timestamp: new Date(baseTime + i * 60 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'sent',
+          reactions: { '👍': (i % 7 === 0) ? 1 : 0, '❤️': (i % 13 === 0) ? 1 : 0 }
+        });
+      }
+
+      let filteredMessages = [...allMessages];
+      let searchQuery = '';
+      let isUserScrolledUp = false;
+
+      // Update Spacer Total Height
+      function updateSpacerHeight() {
+        spacer.style.height = (filteredMessages.length * ITEM_HEIGHT) + 'px';
+        totalMsgsCount.textContent = filteredMessages.length.toLocaleString();
+      }
+
+      // XSS & Highlight Helper
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function highlightText(text, query) {
+        const safe = escapeHtml(text);
+        if (!query.trim()) return safe;
+        const escaped = query.trim().replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+        const reg = new RegExp(`(${escaped})`, 'gi');
+        return safe.replace(reg, '<mark class="highlight">$1</mark>');
+      }
+
+      // 2. Virtual Scrolling Render
+      function renderVirtual() {
+        const scrollTop = viewport.scrollTop;
+        const clientHeight = viewport.clientHeight;
+        const totalItems = filteredMessages.length;
+
+        if (totalItems === 0) {
+          visibleLayer.innerHTML = '<div style="padding:24px; text-align:center; color:#94a3b8;">No messages found matching search query.</div>';
+          visibleNodesCount.textContent = '0';
+          return;
+        }
+
+        const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER_COUNT);
+        const endIndex = Math.min(totalItems, Math.ceil((scrollTop + clientHeight) / ITEM_HEIGHT) + BUFFER_COUNT);
+
+        visibleLayer.style.transform = `translateY(${startIndex * ITEM_HEIGHT}px)`;
+        visibleLayer.innerHTML = '';
+
+        for (let i = startIndex; i < endIndex; i++) {
+          const msg = filteredMessages[i];
+          const itemEl = document.createElement('div');
+          itemEl.className = 'msg-item';
+          itemEl.style.top = `${(i - startIndex) * ITEM_HEIGHT}px`;
+
+          const initial = msg.sender.charAt(0);
+          const hasThumbs = msg.reactions['👍'] > 0;
+          const hasHeart = msg.reactions['❤️'] > 0;
+
+          itemEl.innerHTML = `
+            <div class="avatar" style="background-color: ${msg.color};">${initial}</div>
+            <div class="msg-content">
+              <div class="msg-header">
+                <span class="sender-name">${escapeHtml(msg.sender)}</span>
+                <span class="msg-time">${msg.timestamp}</span>
+                <span class="receipt ${msg.status}">${msg.status === 'sending' ? '🕒 sending...' : '✓✓'}</span>
+              </div>
+              <div class="msg-text">${highlightText(msg.text, searchQuery)}</div>
+            </div>
+            <div class="reactions-bar">
+              <span class="react-pill ${hasThumbs ? 'active' : ''}" data-type="👍">👍 ${msg.reactions['👍']}</span>
+              <span class="react-pill ${hasHeart ? 'active' : ''}" data-type="❤️">❤️ ${msg.reactions['❤️']}</span>
+            </div>
+          `;
+
+          // Double click or click to toggle reaction
+          itemEl.querySelectorAll('.react-pill').forEach(pill => {
+            pill.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const type = pill.dataset.type;
+              msg.reactions[type] = msg.reactions[type] > 0 ? 0 : 1;
+              renderVirtual();
+            });
+          });
+
+          visibleLayer.appendChild(itemEl);
+        }
+
+        visibleNodesCount.textContent = `${visibleLayer.children.length} (target: ~30)`;
+
+        // Check if user is scrolled up
+        const distFromBottom = viewport.scrollHeight - (viewport.scrollTop + viewport.clientHeight);
+        isUserScrolledUp = distFromBottom > 150;
+        if (!isUserScrolledUp) {
+          newMsgsPill.style.display = 'none';
+        }
+      }
+
+      viewport.addEventListener('scroll', renderVirtual);
+
+      // Scroll to Bottom Helper
+      function scrollToBottom() {
+        viewport.scrollTop = viewport.scrollHeight;
+        newMsgsPill.style.display = 'none';
+        renderVirtual();
+      }
+
+      newMsgsPill.addEventListener('click', scrollToBottom);
+
+      // 3. Search Filter with regex escaping
+      searchInput.addEventListener('input', (e) => {
+        searchQuery = e.target.value;
+        if (!searchQuery.trim()) {
+          filteredMessages = [...allMessages];
+        } else {
+          const q = searchQuery.toLowerCase();
+          filteredMessages = allMessages.filter(m =>
+            m.text.toLowerCase().includes(q) || m.sender.toLowerCase().includes(q)
+          );
+        }
+        updateSpacerHeight();
+        viewport.scrollTop = 0;
+        renderVirtual();
+      });
+
+      // 4. Optimistic UI: Send Message
+      inputForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        const newMsg = {
+          id: allMessages.length + 1,
+          sender: 'Arjun (You)',
+          color: '#3b82f6',
+          text,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'sending',
+          reactions: { '👍': 0, '❤️': 0 }
+        };
+
+        allMessages.push(newMsg);
+        if (!searchQuery) filteredMessages = [...allMessages];
+        chatInput.value = '';
+        updateSpacerHeight();
+        scrollToBottom();
+
+        // 600ms transition to "sent"
+        setTimeout(() => {
+          newMsg.status = 'sent';
+          renderVirtual();
+        }, 600);
+      });
+
+      // 5. Mock WebSocket: Incoming messages every 8s with typing indicator
+      const mockIncomingReplies = [
+        'Unit tests for Kanban stack just passed with flying colors.',
+        'Lighthouse accessibility score evaluated at 96/100.',
+        'Video analytics telemetry buffered in LocalStorage successfully.',
+        'Linear regression forecast suggests positive surplus next month.'
+      ];
+
+      setInterval(() => {
+        const randomSender = mockSenders[1 + Math.floor(Math.random() * (mockSenders.length - 1))];
+        typingAuthor.textContent = randomSender.name;
+        typingBar.style.display = 'flex';
+
+        setTimeout(() => {
+          typingBar.style.display = 'none';
+          const replyText = mockIncomingReplies[Math.floor(Math.random() * mockIncomingReplies.length)];
+
+          const incomingMsg = {
+            id: allMessages.length + 1,
+            sender: randomSender.name,
+            color: randomSender.color,
+            text: incomingMsgFormat(allMessages.length + 1, replyText),
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            status: 'sent',
+            reactions: { '👍': 0, '❤️': 0 }
+          };
+
+          allMessages.push(incomingMsg);
+          if (!searchQuery) filteredMessages = [...allMessages];
+          updateSpacerHeight();
+
+          if (isUserScrolledUp) {
+            newMsgsPill.style.display = 'flex';
+            renderVirtual();
+          } else {
+            scrollToBottom();
+          }
+        }, 2200);
+      }, 8000);
+
+      function incomingMsgFormat(id, text) {
+        return `#${id}: ${text}`;
+      }
+
+      // Initial Mount
+      updateSpacerHeight();
+      scrollToBottom();
+    })();
+  </script>
+</body>
+</html>
